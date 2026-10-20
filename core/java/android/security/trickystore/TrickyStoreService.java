@@ -641,6 +641,21 @@ public class TrickyStoreService {
         return false;
     }
 
+    /**
+     * True only for explicit LEAF_HACK targets (pkg?). Unlike needHack(), AUTO is never
+     * included, so persisting the leaf-hacked chain at generation leaves the AUTO /
+     * Play-Integrity path byte-identical to today.
+     */
+    public boolean isLeafHackTarget(String[] packages) {
+        if (packages == null) return false;
+        maybeRefreshTargets();
+        for (String pkg : packages) {
+            if (XPOSED_PACKAGES.contains(pkg)) continue;
+            if (mPackageModes.get(pkg) == Mode.LEAF_HACK) return true;
+        }
+        return false;
+    }
+
     public boolean needGenerate(int callingUid, String[] packages) {
         if (packages == null) return false;
         maybeRefreshTargets();

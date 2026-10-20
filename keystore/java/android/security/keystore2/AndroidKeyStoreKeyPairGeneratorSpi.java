@@ -951,6 +951,56 @@ public abstract class AndroidKeyStoreKeyPairGeneratorSpi extends KeyPairGenerato
             } else {
                  metadata = iSecurityLevel.generateKey(descriptor, mAttestKeyDescriptor,
                         constructKeyGenerationArguments(), flags, additionalEntropy);
+
+                // SELF_CHAIN_SPLIT fix (klimt): for a LEAF_HACK target, persist the leaf-hacked
+                // chain into keystore2 so the owner (engineGetCertificateChain), grant and raw
+                // IKeystoreService binder planes all return the SAME chain. The real TEE key is
+                // kept; only the stored certificates change. The hacked leaf keeps the genuine
+                // leaf's SubjectPublicKeyInfo, so the TEE private key still matches and signing is
+                // unaffected. AUTO (GMS / Play Integrity) is excluded by isLeafHackTarget().
+                if (metadata != null && metadata.certificate != null
+                        && !"TrickyStoreTeeCheck".equals(mEntryAlias)
+                        && !"trickystore_attestation_key".equals(mEntryAlias)) {
+                    try {
+                        TrickyStoreService ts = TrickyStoreService.getInstance();
+                        if (ts.hasKeyboxes() && ts.isLeafHackTarget(packages)) {
+                            List<Certificate> genuine = new ArrayList<>();
+                            genuine.add(AndroidKeyStoreSpi.toCertificate(metadata.certificate));
+                            if (metadata.certificateChain != null) {
+                                java.security.cert.CertificateFactory cf =
+                                        java.security.cert.CertificateFactory.getInstance("X.509");
+                                for (Certificate c : cf.generateCertificates(
+                                        new java.io.ByteArrayInputStream(
+                                                metadata.certificateChain))) {
+                                    genuine.add(c);
+                                }
+                            }
+                            Certificate[] hacked =
+                                    android.security.trickystore.CertificateHacker
+                                            .hackCertificateChain(
+                                                    genuine.toArray(new Certificate[0]), packages);
+                            // Persist only if the hack actually changed the leaf (keybox present
+                            // for this algorithm AND an attestation extension was found).
+                            if (hacked != null && hacked.length > 0
+                                    && !Arrays.equals(
+                                            hacked[0].getEncoded(), metadata.certificate)) {
+                                byte[] leafBytes = hacked[0].getEncoded();
+                                byte[] restBytes = null;
+                                if (hacked.length > 1) {
+                                    restBytes = encodeCertificateChain(
+                                            Arrays.asList(hacked).subList(1, hacked.length));
+                                }
+                                mKeyStore.updateSubcomponents(descriptor, leafBytes, restBytes);
+                                Log.i(TAG, "TrickyStore: persisted leaf-hacked chain for "
+                                        + mEntryAlias);
+                            }
+                        }
+                    } catch (Exception e) {
+                        // Never fail key generation for the spoof. Worst case the owner read
+                        // still hacks transiently, exactly as before this change.
+                        Log.w(TAG, "TrickyStore: failed to persist leaf-hacked chain", e);
+                    }
+                }
             }
 
             AndroidKeyStorePublicKey publicKey =

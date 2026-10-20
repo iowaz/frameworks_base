@@ -120,6 +120,18 @@ public final class CertificateHacker {
                 return chain;
             }
 
+            // Idempotency guard (SELF_CHAIN_SPLIT fix): if this chain is already rooted in this
+            // keybox - i.e. it was persisted leaf-hacked at generation and is now being read back
+            // through engineGetCertificateChain - re-hacking would re-sign the leaf (ECDSA
+            // signatures are randomized) so the owner read would no longer be byte-identical to
+            // the persisted chain the grant/binder planes return, re-opening the split. The hacked
+            // chain is always [hackedLeaf] + keybox.certificates, so the keybox signer sits at
+            // index 1; detect it and return the chain untouched.
+            if (chain.length > 1 && java.util.Arrays.equals(
+                    chain[1].getEncoded(), keybox.certificates.get(0).getEncoded())) {
+                return chain;
+            }
+
             List<Certificate> certificates = new ArrayList<>(keybox.certificates);
             X509CertificateHolder issuerHolder = new X509CertificateHolder(
                 certificates.get(0).getEncoded());
