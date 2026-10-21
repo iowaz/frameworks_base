@@ -203,6 +203,7 @@ public class AxSpoofManager implements IAxSpoofManager {
                 mResolver, ACTIVATED_KEY, 0, UserHandle.USER_SYSTEM) != 0;
         if (mActivated) {
             seedDefaultTargetsIfUnset();
+            ensurePifConfigSeeded();
             stagePifPropOverrides(getCached(Settings.Secure.SPOOF_PIF_CONFIG));
         } else {
             Log.i(TAG, "Spoofing off until Settings is opened for the first time");
@@ -909,6 +910,47 @@ public class AxSpoofManager implements IAxSpoofManager {
     private static String capitalize(String s) {
         return (s == null || s.isEmpty()) ? s
                 : Character.toUpperCase(s.charAt(0)) + s.substring(1);
+    }
+
+    /**
+     * evox24: guarantee the default Pixel (bluejay / Pixel 6a) identity is staged for
+     * apps from the first boot. The hourly auto-refresh is gated by its own one-day
+     * cooldown (LAST_AUTO_FETCH_KEY); if the config was ever cleared while that cooldown
+     * was live, SPOOF_PIF_CONFIG -- and therefore every persist.sys.pif.* app-facing
+     * identity prop that bionic custom_rom_hide serves -- stays empty until the cooldown
+     * expires, leaving apps on the device's real klimt identity. Seed the default profile
+     * only when the config is missing; a populated or user-imported config is left
+     * untouched. App-process scoped, so firmware/HAL/KeyMint attestation keep reading the
+     * genuine klimt identity.
+     */
+    private void ensurePifConfigSeeded() {
+        if (mResolver == null) return;
+        final String content = getCached(Settings.Secure.SPOOF_PIF_CONFIG);
+        if (content != null && !content.trim().isEmpty()) return;
+        try {
+            PixelDeviceRepository.PixelProfile p = PixelDeviceRepository.getProfileByCodename(
+                    mContext, PixelDeviceRepository.PIF_DEFAULT_CODENAME, false);
+            if (p == null || !PixelDeviceRepository.isValidFingerprint(p.fingerprint)) {
+                Log.w(TAG, "No valid default PIF profile to seed");
+                return;
+            }
+            JSONObject cfg = new JSONObject();
+            cfg.put("MANUFACTURER", capitalize(p.brand));
+            cfg.put("BRAND", p.brand);
+            cfg.put("MODEL", p.model);
+            cfg.put("PRODUCT", p.product);
+            cfg.put("DEVICE", p.device);
+            cfg.put("FINGERPRINT", p.fingerprint);
+            cfg.put("SECURITY_PATCH", p.securityPatch);
+            cfg.put("DEVICE_INITIAL_SDK_INT", PIF_DEVICE_INITIAL_SDK);
+            Settings.Secure.putStringForUser(mResolver, Settings.Secure.SPOOF_PIF_CONFIG,
+                    cfg.toString(2), UserHandle.USER_SYSTEM);
+            refreshKey(Settings.Secure.SPOOF_PIF_CONFIG);
+            Log.i(TAG, "Seeded default Pixel (" + PixelDeviceRepository.PIF_DEFAULT_CODENAME
+                    + ") PIF config so the app-facing identity stages from boot");
+        } catch (Exception e) {
+            Log.w(TAG, "Failed to seed default PIF config", e);
+        }
     }
 
     private String getCached(String key) {
