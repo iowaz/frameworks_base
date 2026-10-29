@@ -360,7 +360,10 @@ public final class CertificateHacker {
             String[] packages) throws Exception {
 
         byte[] bootKey = rootOfTrustOctet(originalRootOfTrust, 0);
-        if (bootKey == null) {
+        // An unlocked bootloader can make the TEE attest an all-zero verified boot key, which is
+        // only valid with an Unverified boot state. The hacked RootOfTrust says Verified, so use
+        // the same boot key as the generated path instead.
+        if (bootKey == null || isAllZero(bootKey)) {
             bootKey = AttestationUtils.getBootKey();
         }
 
@@ -420,6 +423,15 @@ public final class CertificateHacker {
         DEROctetString hackedOctets = new DEROctetString(hackedSequence);
 
         return new Extension(CertificateGenerator.ATTESTATION_OID, false, hackedOctets);
+    }
+
+    private static boolean isAllZero(byte[] value) {
+        for (byte b : value) {
+            if (b != 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static byte[] rootOfTrustOctet(ASN1Encodable rootOfTrust, int index) {
